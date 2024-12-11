@@ -1,0 +1,238 @@
+---
+title: "Step_F_PengxiangXia"
+author: "Pengxiang Xia"
+date: "2024-12-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(prettyR)
+library(ltm)
+library(lme4)
+library(car)
+```
+
+
+#Data Preprocess
+```{r}
+load("~/Step-E-Data-preprocess/21600-0001-Data.rda")
+#Select variable H1PR5, H1PR6, H1PR7, H1PR8, and AID to create the familyrelationship subset
+familyRelationship <- da21600.0001 %>% dplyr::select(H1PR3, H1PR5, H1PR6, H1PR7, H1PR8, AID)
+
+#Convert into numeric form
+
+familyRelationship$H1PR3 <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", familyRelationship$H1PR3))
+
+familyRelationship$H1PR5 <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", familyRelationship$H1PR5))
+
+familyRelationship$H1PR6 <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", familyRelationship$H1PR6))
+
+familyRelationship$H1PR6 <- recode(familyRelationship$H1PR6, as.factor=F, as.numeric=T, recodes="'1'='5';'2'='4';'4'='2';'5'='1'", separator = ";")
+
+familyRelationship$H1PR7 <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", familyRelationship$H1PR7))
+
+familyRelationship$H1PR8 <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", familyRelationship$H1PR8))
+
+
+
+# 6 = Does not apply, remove all the does not apply participants
+familyRelationship <- familyRelationship %>% filter_all(all_vars(. != 6))
+
+# Construct a variable fRelation =H1PR3+ H1PR5 + H1PR7 + H1PR8 +H1PR6
+familyRelationship <- familyRelationship %>% mutate(fRelation = H1PR3+H1PR5+H1PR7+H1PR8+H1PR6)
+hist(familyRelationship$fRelation)
+
+#School grade and adoption
+GPA <- da21600.0001 %>% dplyr::select(S10A, S10B, S10C, S10D, S25,AID)
+
+t5 <- sort(levels(GPA$S10A))
+t5 <- (sub("^\\([0-9]+\\) +(.+$)", "\\1", t5))
+GPA$S10A <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", GPA$S10A))
+GPA$S10A <- add.value.labels(GPA$S10A, t5)
+
+t6 <- sort(levels(GPA$S10B))
+t6 <- (sub("^\\([0-9]+\\) +(.+$)", "\\1", t6))
+GPA$S10B <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", GPA$S10B))
+GPA$S10B <- add.value.labels(GPA$S10B, t6)
+
+t7 <- sort(levels(GPA$S10C))
+t7 <- (sub("^\\([0-9]+\\) +(.+$)", "\\1", t7))
+GPA$S10C <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", GPA$S10C))
+GPA$S10C <- add.value.labels(GPA$S10C, t7)
+
+t8 <- sort(levels(GPA$S10D))
+t8 <- (sub("^\\([0-9]+\\) +(.+$)", "\\1", t8))
+GPA$S10D <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", GPA$S10D))
+GPA$S10D <- add.value.labels(GPA$S10D, t8)
+
+t9 <- sort(levels(GPA$S25))
+t9 <- (sub("^\\([0-9]+\\) +(.+$)", "\\1", t9))
+GPA$S25 <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", GPA$S25))
+GPA$S25 <- add.value.labels(GPA$S25, t9)
+# 5 = not take, thus turn 5 equal to 0, so that this won't affect GPA 
+GPA <- GPA %>% mutate(across(c("S10A", "S10B", "S10C", "S10D"), ~ if_else(.==5, 0, .)))
+
+#Drop NAs
+
+GPA <- GPA %>% drop_na()
+
+#calculate GPA
+GPA <- GPA %>% mutate(GPA = ((S10A + S10B + S10C + S10D)/4))
+
+summary(GPA$GPA)
+hist(GPA$GPA)
+
+table(GPA$S25)
+
+# filter out the adopted family from the GPA dataset
+
+GPA_adopted <- GPA %>% filter(S25 == 1)
+
+hist(GPA_adopted$GPA)
+
+#Merge GPA_adopted and the familyRelationship dataset into the Adopted version, leaving only GPA, fRelation and AID
+Adopted <- left_join(GPA_adopted, familyRelationship, by="AID")  
+Adopted2 <- left_join(GPA_adopted, familyRelationship, by="AID") 
+Adopted <- dplyr::select(Adopted, GPA, AID, fRelation) %>% drop_na()
+Adopted2 <- dplyr::select(Adopted2, GPA, AID, H1PR3, H1PR5, H1PR6, H1PR7, H1PR8) %>% drop_na()
+# filter out the original family from the GPA dataset
+GPA_original <- GPA %>% filter(S25 == 0)
+
+#Merge GPA and the familyRelationship dataset into the original version, leaving only GPA, fRelation, S25 and AID
+
+Original <-  left_join(GPA_original, familyRelationship, by="AID")
+Original2 <-  left_join(GPA_original, familyRelationship, by="AID")
+Original <- dplyr::select(Original, GPA, AID, fRelation) %>% drop_na()
+Original2 <- dplyr::select(Original2, GPA, AID, H1PR3, H1PR5, H1PR6, H1PR7, H1PR8) %>% drop_na()
+
+#Randomly select 99 participants from the Original dataset and combine with the Adopted dataset into a Clean dataset
+
+set.seed(123)
+sample_indices <- sample(1:nrow(Original), size = 99, replace = FALSE)
+Sample_Original <- Original[sample_indices,]
+
+Clean <-  rbind.data.frame(Sample_Original, Adopted)
+
+#Merge the Clean dataset with the Wave 1 data to get the S25 adoption indices
+
+Finaldata <- left_join(Clean, da21600.0001, by="AID") %>% dplyr::select(GPA, fRelation, S25, AID)
+
+
+Finaldata$S25 <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", Finaldata$S25))
+Finaldata$S25 <- as.factor(Finaldata$S25)
+
+
+Finaldata$AID <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", Finaldata$AID))
+Finaldata$AID <- as.factor(Finaldata$AID)
+
+FinaldataWide <- pivot_wider(Finaldata, id_cols="AID", names_from="S25", values_from=c("GPA","fRelation") )
+
+#Simply combine original with adopted
+
+Combined <- rbind.data.frame(Adopted, Original)
+Combined <- left_join(Combined, da21600.0001, by="AID") %>% dplyr::select(GPA, fRelation, S25, AID)
+
+Combined$S25 <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", Combined$S25))
+Combined$S25 <- as.factor(Combined$S25)
+
+
+Combined$AID <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", Combined$AID))
+Combined$AID <- as.factor(Combined$AID)
+
+Combined <- na.omit(Combined)
+
+
+
+Combined2 <-  rbind.data.frame(Adopted2, Original2)
+
+Combined2$AID <- as.numeric(sub("^\\(0*([0-9]+)\\).+$", "\\1", Combined2$AID))
+Combined2$AID <- as.factor(Combined2$AID)
+```
+
+#Visualization of the clean dataset
+```{r}
+hist(Finaldata$GPA, xlab="GPA", main="Distribution of the GPA")
+hist(Finaldata$fRelation, xlab="Family relationship", main="Distribution of the Family relationship")
+ggplot(Finaldata, aes(fRelation, GPA, fill=S25))+geom_boxplot()+labs(title="boxplot for GPA and fRelation with S25")
+ggplot(Finaldata, aes(fRelation, GPA))+geom_point()+geom_smooth(method="lm", formula=y~x)+labs(title="Final balanced dataset")
+
+ggplot(Combined, aes(fRelation, GPA))+geom_point()+geom_smooth(method="lm", formula=y~x)+labs(title="Final unbalanced dataset")
+ggplot(Adopted, aes(fRelation, GPA))+geom_point()+geom_smooth(method="lm", formula=y~x)+labs(title="Adopted")
+ggplot(Original,aes(fRelation, GPA))+geom_point()+geom_smooth(method="lm", formula=y~x)+labs(title="Original")
+```
+
+# Analyses Attempts
+```{r}
+#Adopted Only analysis
+model1 <- lm(GPA~fRelation, data=Adopted)
+summary(model1)
+
+#Original Only analysis
+model2 <- lm(GPA~fRelation, data=Original)
+summary(model2)
+
+#Linear regression and anova model test on random sampled equal number s25 data
+model3 <- lm(GPA~fRelation, data= Finaldata)
+summary(model3)
+
+model4 <- lm(GPA~fRelation+S25, data=Finaldata)
+summary(model4)
+
+anova1 <- aov(fRelation~S25, data= Finaldata)
+summary(anova1)
+
+anova2 <- aov(GPA~S25, data=Finaldata)
+summary(anova2)
+
+#correlation test
+biserial.cor(Finaldata$GPA, Finaldata$S25, level=2)
+cor.test(Finaldata$GPA, Finaldata$fRelation)
+
+
+#Error term anova
+anova3 <- aov(GPA~S25+Error(1/AID), data=Finaldata)
+summary(anova3)
+
+anova4 <- aov(fRelation~S25+(1/AID), data=Finaldata)
+summary(anova4)
+#paired t-test
+t.test(FinaldataWide$GPA_0, FinaldataWide$GPA_1)
+t.test(FinaldataWide$fRelation_0, FinaldataWide$fRelation_1)
+
+#Analysis on Combined dataset
+model5 <- lm(GPA~fRelation+S25, data=Combined)
+summary(model5)
+
+
+anova5 <- aov(GPA~fRelation+Error(1/AID), data=Combined)
+summary(anova5)
+
+anova6 <- aov(GPA~S25, data=Combined)
+summary(anova6)
+
+anova7 <- aov(fRelation~S25, data=Combined)
+summary(anova6)
+
+anova8 <- aov(GPA~fRelation+S25+Error(1/AID), data=Combined)
+summary(anova8)
+
+#test for fun, not include in the main analysis
+library(randomForest)
+train_index <- sample(1:nrow(Combined2), 0.5*nrow(Combined2))
+train_data <- Combined2[train_index,]
+test_data <- Combined2[-train_index,]
+
+rf <- randomForest(GPA~H1PR3+H1PR5+H1PR6+H1PR7+H1PR8, data=train_data, ntree=500, mtry=2, importance=TRUE)
+prediction <- predict(rf, test_data)
+
+confusion_matrix <- table(test_data$GPA, prediction)
+accuracy <- sum(diag(confusion_matrix))/sum(confusion_matrix)
+
+importance(rf)
+varImpPlot(rf)
+```
+
+
