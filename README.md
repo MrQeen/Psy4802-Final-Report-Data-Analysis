@@ -1,6 +1,6 @@
 # Psy4802-Final-Report-Data-Analysis
 
-This final project aims to identify the key factors to predict GPA based on the Add Health Wave I data.
+This final project aims to analyze the influence of family relationship on the academic performance for children
 
 21600-001-Data is the Add Health Wave I data
 
